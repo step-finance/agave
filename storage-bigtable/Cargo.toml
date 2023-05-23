@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+async-stream = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
 bincode = { workspace = true }
 bytes = { workspace = true }
@@ -17,10 +18,12 @@ bzip2 = { workspace = true }
 enum-iterator = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
+gcp_auth = "0.7.5"
 goauth = { workspace = true }
 http = { workspace = true }
 hyper = { workspace = true }
 hyper-proxy = { workspace = true }
+itertools = "0.10.3"
 log = { workspace = true }
 # openssl is a dependency of the goauth and smpl_jwt crates, but explicitly
 # declare it here as well to activate the "vendored" feature that builds OpenSSL
@@ -35,7 +38,7 @@ solana-sdk = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { version = "1", features = [ "parking_lot" ] }
 tonic = { workspace = true, features = ["tls", "transport"] }
 zstd = { workspace = true }
 
