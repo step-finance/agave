@@ -398,6 +398,7 @@ impl From<LegacyTransactionByAddrInfo> for TransactionByAddrInfo {
 pub const DEFAULT_INSTANCE_NAME: &str = "solana-ledger";
 pub const DEFAULT_APP_PROFILE_ID: &str = "default";
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
+pub const DEFAULT_WINDOW_SIZE: u32 = 52428800;
 
 #[derive(Debug)]
 pub enum CredentialType {
@@ -413,6 +414,8 @@ pub struct LedgerStorageConfig {
     pub app_profile_id: String,
     pub max_message_size: usize,
     pub project: String,
+    pub stream_window_size: u32,
+    pub channel_window_size: u32,
 }
 
 impl Default for LedgerStorageConfig {
@@ -424,6 +427,8 @@ impl Default for LedgerStorageConfig {
             app_profile_id: DEFAULT_APP_PROFILE_ID.to_string(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             project: "none".to_string(),
+            stream_window_size: DEFAULT_WINDOW_SIZE,
+            channel_window_size: DEFAULT_WINDOW_SIZE,
         }
     }
 }
@@ -467,11 +472,15 @@ impl LedgerStorage {
         read_only: bool,
         timeout: Option<std::time::Duration>,
         project: String,
+        stream_window_size: u32,
+        channel_window_size: u32,
     ) -> Result<Self> {
         Self::new_with_config(LedgerStorageConfig {
             read_only,
             timeout,
             project,
+            stream_window_size,
+            channel_window_size,
             ..LedgerStorageConfig::default()
         })
         .await
@@ -505,6 +514,8 @@ impl LedgerStorage {
             app_profile_id,
             project,
             max_message_size,
+            stream_window_size,
+            channel_window_size,
         } = config;
         let connection = bigtable::BigTableConnection::new(
             instance_name.as_str(),
@@ -513,6 +524,8 @@ impl LedgerStorage {
             read_only,
             timeout,
             max_message_size,
+            stream_window_size,
+            channel_window_size,
         )
         .await?;
         Ok(Self { stats, connection })

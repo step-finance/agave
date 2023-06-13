@@ -15,10 +15,7 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
-    tonic::{
-        codegen::InterceptedService, transport::ClientTlsConfig, Request,
-        Status,
-    },
+    tonic::{codegen::InterceptedService, transport::ClientTlsConfig, Request, Status},
 };
 
 #[allow(clippy::enum_variant_names)]
@@ -149,15 +146,20 @@ impl BigTableConnection {
         read_only: bool,
         timeout: Option<Duration>,
         max_message_size: usize,
+        stream_window_size: u32,
+        connection_window_size: u32,
     ) -> Result<Self> {
+        info!("using connection window size: {}", connection_window_size);
+        info!("using stream window size: {}", stream_window_size);
         match std::env::var("BIGTABLE_EMULATOR_HOST") {
             Ok(endpoint) => {
                 info!("Connecting to bigtable emulator at {}", endpoint);
-
                 Ok(Self {
                     access_token: None,
                     channel: tonic::transport::Channel::from_shared(format!("http://{}", endpoint))
                         .map_err(|err| Error::InvalidUri(endpoint, err.to_string()))?
+                        .initial_stream_window_size(stream_window_size)
+                        .initial_connection_window_size(connection_window_size)
                         .connect_lazy(),
                     table_prefix: format!("projects/emulator/instances/{}/tables/", instance_name),
                     app_profile_id: app_profile_id.to_string(),
@@ -177,17 +179,18 @@ impl BigTableConnection {
 
                 let table_prefix =
                     format!("projects/{}/instances/{}/tables/", project, instance_name);
-
                 let endpoint = {
                     let endpoint =
                         tonic::transport::Channel::from_static("https://bigtable.googleapis.com")
+                            .initial_stream_window_size(stream_window_size)
+                            .initial_connection_window_size(connection_window_size)
                             .tls_config(
-                            ClientTlsConfig::new()
-                                .ca_certificate(
-                                    root_ca_certificate::load().map_err(Error::Certificate)?,
-                                )
-                                .domain_name("bigtable.googleapis.com"),
-                        )?;
+                                ClientTlsConfig::new()
+                                    .ca_certificate(
+                                        root_ca_certificate::load().map_err(Error::Certificate)?,
+                                    )
+                                    .domain_name("bigtable.googleapis.com"),
+                            )?;
 
                     if let Some(timeout) = timeout {
                         endpoint.timeout(timeout)
