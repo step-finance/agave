@@ -4,9 +4,11 @@ use {
     jsonrpc_server_utils::tokio::sync::oneshot::Sender as OneShotSender,
     libloading::Library,
     log::*,
+    solana_runtime::program_inclusions::{load_datum_program_inclusions, ProgramDatumInclusions},
     std::{
         ops::{Deref, DerefMut},
         path::Path,
+        sync::{Arc, RwLock},
     },
 };
 
@@ -47,13 +49,15 @@ impl DerefMut for LoadedGeyserPlugin {
 pub struct GeyserPluginManager {
     pub plugins: Vec<LoadedGeyserPlugin>,
     libs: Vec<Library>,
+    inclusions: Arc<RwLock<ProgramDatumInclusions>>,
 }
 
 impl GeyserPluginManager {
-    pub fn new() -> Self {
+    pub fn new(inclusions: Arc<RwLock<ProgramDatumInclusions>>) -> Self {
         GeyserPluginManager {
             plugins: Vec::default(),
             libs: Vec::default(),
+            inclusions,
         }
     }
 
@@ -188,6 +192,7 @@ impl GeyserPluginManager {
     /// If it exists, first unload it.
     /// Then, attempt to load a new plugin
     pub(crate) fn reload_plugin(&mut self, name: &str, config_file: &str) -> JsonRpcResult<()> {
+        log::warn!("reload_plugin called. starting");
         // Check if any plugin names match this one
         let Some(idx) = self
             .plugins
@@ -202,10 +207,12 @@ impl GeyserPluginManager {
             });
         };
 
+        log::warn!("reload_plugin found plugin to reload. dropping old");
         // Unload and drop current plugin first in case plugin requires exclusive access to resource,
         // such as a particular port or database.
         self._drop_plugin(idx);
 
+        log::warn!("reload_plugin dropped old plugin. loading new");
         // Try to load plugin, library
         // SAFETY: It is up to the validator to ensure this is a valid plugin library.
         let (mut new_plugin, new_lib, new_parsed_config_file) =
@@ -215,6 +222,7 @@ impl GeyserPluginManager {
                 data: None,
             })?;
 
+        log::warn!("reload_plugin loaded new plugin. checking for existing plugin");
         // Then see if a plugin with this name already exists. If so, abort
         if self
             .plugins
@@ -231,18 +239,28 @@ impl GeyserPluginManager {
             });
         }
 
+        log::warn!("reload_plugin no existing plugin found. setting up logger");
         setup_logger_for_plugin(&*new_plugin.plugin)?;
 
+        log::warn!("reload_plugin logger set up. calling on_load");
         // Attempt to on_load with new plugin
         match new_plugin.on_load(new_parsed_config_file, true) {
             // On success, push plugin and library
             Ok(()) => {
                 self.plugins.push(new_plugin);
                 self.libs.push(new_lib);
+
+                // Reload datum inclusions
+                log::info!("Reloading datum inclusions");
+                let mut inclusions_write_lock = self.inclusions.write().unwrap();
+                *inclusions_write_lock =
+                    load_datum_program_inclusions(&Some(vec![config_file.into()]));
+                log::info!("Reloaded datum inclusions");
             }
 
             // On failure, return error
             Err(err) => {
+                log::error!("Failed to start new plugin (previous plugin was dropped!): {err}");
                 return Err(jsonrpc_core::error::Error {
                     code: ErrorCode::InvalidRequest,
                     message: format!(
@@ -260,6 +278,7 @@ impl GeyserPluginManager {
         let current_lib = self.libs.remove(idx);
         let mut current_plugin = self.plugins.remove(idx);
         let name = current_plugin.name().to_string();
+        log::warn!("Unloading plugin {name} at idx {idx}");
         current_plugin.on_unload();
         // The plugin must be dropped before the library to avoid a crash.
         drop(current_plugin);
@@ -483,7 +502,9 @@ mod tests {
     #[test]
     fn test_geyser_reload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new(Arc::new(
+            RwLock::new(Default::default()),
+        ))));
 
         // No plugins are loaded, this should fail
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
@@ -524,7 +545,9 @@ mod tests {
     #[test]
     fn test_plugin_list() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new(Arc::new(
+            RwLock::new(Default::default()),
+        ))));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
 
         // Load two plugins
@@ -548,7 +571,9 @@ mod tests {
     #[test]
     fn test_plugin_load_unload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new(Arc::new(
+            RwLock::new(Default::default()),
+        ))));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
 
         // Load rpc call

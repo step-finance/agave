@@ -17,6 +17,7 @@ use {
         optimistically_confirmed_bank_tracker::SlotNotification,
         transaction_notifier_interface::TransactionNotifierArc,
     },
+    solana_runtime::program_inclusions::ProgramDatumInclusions,
     std::{
         path::{Path, PathBuf},
         sync::{
@@ -55,8 +56,14 @@ impl GeyserPluginService {
     pub fn new(
         confirmed_bank_receiver: Receiver<SlotNotification>,
         geyser_plugin_config_files: &[PathBuf],
+        inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) -> Result<Self, GeyserPluginServiceError> {
-        Self::new_with_receiver(confirmed_bank_receiver, geyser_plugin_config_files, None)
+        Self::new_with_receiver(
+            confirmed_bank_receiver,
+            geyser_plugin_config_files,
+            None,
+            inclusions,
+        )
     }
 
     pub fn new_with_receiver(
@@ -66,12 +73,13 @@ impl GeyserPluginService {
             Receiver<GeyserPluginManagerRequest>,
             Arc<AtomicBool>,
         )>,
+        inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) -> Result<Self, GeyserPluginServiceError> {
         info!(
             "Starting GeyserPluginService from config files: {:?}",
             geyser_plugin_config_files
         );
-        let mut plugin_manager = GeyserPluginManager::new();
+        let mut plugin_manager = GeyserPluginManager::new(inclusions);
 
         for geyser_plugin_config_file in geyser_plugin_config_files {
             Self::load_plugin(&mut plugin_manager, geyser_plugin_config_file)?;
@@ -189,6 +197,7 @@ impl GeyserPluginService {
             .name("SolGeyserPluginRpc".to_string())
             .spawn(move || loop {
                 if let Ok(request) = request_receiver.recv_timeout(Duration::from_secs(5)) {
+                    log::warn!("Got request: {:?}", request);
                     match request {
                         GeyserPluginManagerRequest::ListPlugins { response_sender } => {
                             let plugin_list = plugin_manager.read().unwrap().list_plugins();
@@ -202,6 +211,7 @@ impl GeyserPluginService {
                             ref config_file,
                             response_sender,
                         } => {
+                            log::warn!("About to reload plugin: {:?}", name);
                             let reload_result = plugin_manager
                                 .write()
                                 .unwrap()
