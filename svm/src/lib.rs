@@ -6,6 +6,7 @@ pub mod account_overrides;
 pub mod account_rent_state;
 pub mod message_processor;
 pub mod nonce_info;
+pub mod program_inclusions;
 pub mod program_loader;
 pub mod rollback_accounts;
 pub mod runtime_config;
