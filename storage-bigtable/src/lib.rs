@@ -736,16 +736,18 @@ impl LedgerStorage {
             .await?
             .map(|cell| match cell {
                 Ok((sig, Ok(TransactionInfo { slot, index, .. }))) => {
-                    Ok((sig, Some((slot, index))))
+                    (sig, Some((slot, index)))
                 },
                 Ok((sig, Err(e))) => { //I thought this hit on missing tx, but it doesn't
                     warn!("Error looking up transaction info for {}: {:?}", sig, e);
-                    Ok((sig, None))
+                    (sig, None)
                 },
-                Err(e) => Err(e),
+                Err(e) => {
+                    error!("Terrible error with get_bincode_cells looking up transaction info: {:?}", e);
+                    ("get_bincode_cells error".to_string(), None)
+                },
             })
-            .try_collect::<Vec<_>>().await?;
-            //.await?;
+            .collect::<Vec<_>>().await;
         
         let mut good_cells: Vec<(Slot, u32)> = Vec::new();
         let mut bad_cells: Vec<String> = Vec::new();
@@ -753,7 +755,8 @@ impl LedgerStorage {
         for cell in &cells {
             match cell {
                 (_, Some(c)) => good_cells.push(*c),
-                (s, None) => bad_cells.push(s.clone()),
+                (s, None) if s != "get_bincode_cells error" => bad_cells.push(s.clone()),
+                _ => (),
             }
         }
 
