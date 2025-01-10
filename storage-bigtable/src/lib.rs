@@ -689,8 +689,14 @@ impl LedgerStorage {
         let mut blocks_map: HashMap<Slot, ConfirmedBlock> = HashMap::new();
         futures::pin_mut!(blocks); // needed for iteration
         while let Some(block) = blocks.next().await {
-            let block = block?;
-            blocks_map.insert(block.0, block.1);
+            match block {
+                Err(e) => {
+                    error!("Terrible error with get_confirmed_blocks_with_data: {}", e);
+                },
+                Ok(block) => {
+                    blocks_map.insert(block.0, block.1);
+                },
+            };
         }
 
         // Extract transactions
