@@ -72,6 +72,7 @@ use {
     },
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::socket::SocketAddrSpace,
+    solana_svm::program_inclusions::load_datum_program_inclusions,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
         collections::{HashSet, VecDeque},
@@ -1307,6 +1308,10 @@ pub fn main() {
     };
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some();
 
+    let program_datum_inclusions = Arc::new(RwLock::new(load_datum_program_inclusions(
+        &on_start_geyser_plugin_config_files,
+    )));
+
     let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
         || matches.is_present("enable_bigtable_ledger_upload")
     {
@@ -1510,6 +1515,7 @@ pub fn main() {
         accounts_shrink_ratio,
         runtime_config: RuntimeConfig {
             log_messages_bytes_limit: value_of(&matches, "log_messages_bytes_limit"),
+            program_datum_inclusions,
             ..RuntimeConfig::default()
         },
         staked_nodes_overrides: staked_nodes_overrides.clone(),
