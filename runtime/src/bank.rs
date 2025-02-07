@@ -144,6 +144,7 @@ use {
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
         transaction_balances::BalanceCollector,
+        transaction_balances::ProgramDatumInclusions,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -358,6 +359,39 @@ impl TransactionBalancesSet {
 pub type TransactionBalances = Vec<Vec<u64>>;
 
 pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
+
+#[derive(Debug)]
+pub struct TransactionDatumSet {
+    pub pre_datum: TransactionDatum,
+    pub post_datum: TransactionDatum,
+}
+
+impl TransactionDatumSet {
+    pub fn new(pre_datum: TransactionDatum, post_datum: TransactionDatum) -> Self {
+        Self {
+            pre_datum,
+            post_datum,
+        }
+    }
+}
+pub type TransactionDatum = Vec<Vec<Option<Vec<u8>>>>;
+
+#[derive(Debug)]
+pub struct TransactionOwnersSet {
+    pub pre_owners: TransactionOwners,
+    pub post_owners: TransactionOwners,
+}
+
+impl TransactionOwnersSet {
+    pub fn new(pre_owners: TransactionOwners, post_owners: TransactionOwners) -> Self {
+        Self {
+            pre_owners,
+            post_owners,
+        }
+    }
+}
+
+pub type TransactionOwners = Vec<Vec<Option<Pubkey>>>;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TransactionLogCollectorFilter {
@@ -575,6 +609,7 @@ impl PartialEq for Bank {
             accounts_data_size_delta_on_chain: _,
             accounts_data_size_delta_off_chain: _,
             epoch_reward_status: _,
+            program_datum_inclusions: _,
             transaction_processor: _,
             check_program_modification_slot: _,
             collector_fee_details: _,
@@ -903,6 +938,8 @@ pub struct Bank {
 
     check_program_modification_slot: bool,
 
+    /// programs that will have their account data sent to geyser
+    pub program_datum_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     /// Collected fee details
     collector_fee_details: RwLock<CollectorFeeDetails>,
 
@@ -1135,6 +1172,7 @@ impl Bank {
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
+            program_datum_inclusions: Arc::new(RwLock::new(ProgramDatumInclusions::default())),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
@@ -1151,8 +1189,11 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
-        bank.transaction_processor =
-            TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
+        bank.transaction_processor = TransactionBatchProcessor::new_uninitialized(
+            bank.slot,
+            bank.epoch,
+            bank.program_datum_inclusions.clone(),
+        );
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
@@ -1179,6 +1220,7 @@ impl Bank {
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut bank = Self::default_with_accounts(accounts);
+        bank.program_datum_inclusions = runtime_config.program_datum_inclusions.clone();
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
         bank.compute_budget = runtime_config.compute_budget;
         bank.transaction_account_lock_limit = runtime_config.transaction_account_lock_limit;
@@ -1301,9 +1343,13 @@ impl Bank {
 
         let (epoch_stakes, epoch_stakes_time_us) = measure_us!(parent.epoch_stakes.clone());
 
-        let (transaction_processor, builtin_program_ids_time_us) = measure_us!(
-            TransactionBatchProcessor::new_from(&parent.transaction_processor, slot, epoch)
-        );
+        let (transaction_processor, builtin_program_ids_time_us) =
+            measure_us!(TransactionBatchProcessor::new_from(
+                &parent.transaction_processor,
+                slot,
+                epoch,
+                parent.program_datum_inclusions.clone()
+            ));
 
         let (rewards_pool_pubkeys, rewards_pool_pubkeys_time_us) =
             measure_us!(parent.rewards_pool_pubkeys.clone());
@@ -1392,6 +1438,7 @@ impl Bank {
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: parent.epoch_reward_status.clone(),
+            program_datum_inclusions: parent.program_datum_inclusions.clone(),
             transaction_processor,
             check_program_modification_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
@@ -1812,6 +1859,7 @@ impl Bank {
         ));
         info!("Loading Stakes took: {stakes_time}");
         let stakes_accounts_load_duration = now.elapsed();
+        let program_datum_inclusions = runtime_config.program_datum_inclusions.clone();
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: bank_rc,
@@ -1871,6 +1919,7 @@ impl Bank {
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
+            program_datum_inclusions,
             // collector_fee_details is not serialized to snapshot
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: runtime_config.compute_budget,
@@ -1886,8 +1935,11 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
-        bank.transaction_processor =
-            TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
+        bank.transaction_processor = TransactionBatchProcessor::new_uninitialized(
+            bank.slot,
+            bank.epoch,
+            bank.program_datum_inclusions.clone(),
+        );
 
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
@@ -4764,8 +4816,7 @@ impl Bank {
     pub fn read_balance(account: &AccountSharedData) -> u64 {
         account.lamports()
     }
-    /// Each program would need to be able to introspect its own state
-    /// this is hard-coded to the Budget language
+
     pub fn get_balance(&self, pubkey: &Pubkey) -> u64 {
         self.get_account(pubkey)
             .map(|x| Self::read_balance(&x))

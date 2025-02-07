@@ -2,7 +2,7 @@ use {
     solana_account_decoder::{
         parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
     },
-    solana_runtime::bank::TransactionBalancesSet,
+    solana_runtime::bank::{TransactionBalancesSet, TransactionDatumSet, TransactionOwnersSet},
     solana_svm::transaction_balances::{BalanceCollector, SvmTokenInfo},
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
@@ -12,8 +12,22 @@ use {
 // decompose the contents of BalanceCollector into the two structs required by TransactionStatusSender
 pub fn compile_collected_balances(
     balance_collector: BalanceCollector,
-) -> (TransactionBalancesSet, TransactionTokenBalancesSet) {
-    let (native_pre, native_post, token_pre, token_post) = balance_collector.into_vecs();
+) -> (
+    TransactionBalancesSet,
+    TransactionTokenBalancesSet,
+    TransactionDatumSet,
+    TransactionOwnersSet,
+) {
+    let (
+        native_pre,
+        native_post,
+        token_pre,
+        token_post,
+        pre_datum,
+        post_datum,
+        pre_owner,
+        post_owner,
+    ) = balance_collector.into_vecs();
 
     let native_balances = TransactionBalancesSet::new(native_pre, native_post);
     let token_balances = TransactionTokenBalancesSet::new(
@@ -21,7 +35,10 @@ pub fn compile_collected_balances(
         collected_token_infos_to_token_balances(token_post),
     );
 
-    (native_balances, token_balances)
+    let datum_set = TransactionDatumSet::new(pre_datum, post_datum);
+    let owner_set = TransactionOwnersSet::new(pre_owner, post_owner);
+
+    (native_balances, token_balances, datum_set, owner_set)
 }
 
 fn collected_token_infos_to_token_balances(

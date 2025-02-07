@@ -3,9 +3,12 @@ use {
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
     libloading::Library,
     log::*,
+    solana_runtime::program_inclusions::load_datum_program_inclusions,
+    solana_svm::transaction_balances::ProgramDatumInclusions,
     std::{
         ops::{Deref, DerefMut},
         path::Path,
+        sync::{Arc, RwLock},
     },
     tokio::sync::oneshot::Sender as OneShotSender,
 };
@@ -57,12 +60,14 @@ impl DerefMut for LoadedGeyserPlugin {
 #[derive(Default, Debug)]
 pub struct GeyserPluginManager {
     pub plugins: Vec<LoadedGeyserPlugin>,
+    inclusions: Arc<RwLock<ProgramDatumInclusions>>,
 }
 
 impl GeyserPluginManager {
-    pub fn new() -> Self {
+    pub fn new(inclusions: Arc<RwLock<ProgramDatumInclusions>>) -> Self {
         GeyserPluginManager {
             plugins: Vec::default(),
+            inclusions,
         }
     }
 
@@ -252,6 +257,13 @@ impl GeyserPluginManager {
             // On success, push plugin and library
             Ok(()) => {
                 self.plugins.push(new_plugin);
+
+                // Reload datum inclusions
+                log::info!("Reloading datum inclusions");
+                let mut inclusions_write_lock = self.inclusions.write().unwrap();
+                *inclusions_write_lock =
+                    load_datum_program_inclusions(&Some(vec![config_file.into()]));
+                log::info!("Reloaded datum inclusions");
             }
 
             // On failure, return error
@@ -494,7 +506,9 @@ mod tests {
     #[test]
     fn test_geyser_reload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new(Arc::new(
+            RwLock::new(Default::default()),
+        ))));
 
         // No plugins are loaded, this should fail
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
@@ -533,7 +547,9 @@ mod tests {
     #[test]
     fn test_plugin_list() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new(Arc::new(
+            RwLock::new(Default::default()),
+        ))));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
 
         // Load two plugins
@@ -555,7 +571,9 @@ mod tests {
     #[test]
     fn test_plugin_load_unload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new(Arc::new(
+            RwLock::new(Default::default()),
+        ))));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
 
         // Load rpc call
