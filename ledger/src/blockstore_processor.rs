@@ -32,7 +32,10 @@ use {
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime::{
         accounts_background_service::SnapshotRequestKind,
-        bank::{Bank, PreCommitResult, TransactionBalancesSet},
+        bank::{
+            Bank, PreCommitResult, TransactionBalancesSet, TransactionDatumSet,
+            TransactionOwnersSet,
+        },
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -227,7 +230,7 @@ pub fn execute_batch<'a>(
         }
     };
 
-    let (commit_results, balance_collector) = batch
+    let (commit_results, balance_collector, datum, owners) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -307,6 +310,8 @@ pub fn execute_batch<'a>(
             transactions,
             commit_results,
             balances,
+            owners,
+            datum,
             token_balances,
             tx_costs,
             transaction_indexes.into_owned(),
@@ -2232,6 +2237,8 @@ pub struct TransactionStatusBatch {
     pub transactions: Vec<SanitizedTransaction>,
     pub commit_results: Vec<TransactionCommitResult>,
     pub balances: TransactionBalancesSet,
+    pub owners: TransactionOwnersSet,
+    pub datum: TransactionDatumSet,
     pub token_balances: TransactionTokenBalancesSet,
     pub costs: Vec<Option<u64>>,
     pub transaction_indexes: Vec<usize>,
@@ -2249,6 +2256,8 @@ impl TransactionStatusSender {
         transactions: Vec<SanitizedTransaction>,
         commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
+        owners: TransactionOwnersSet,
+        datum: TransactionDatumSet,
         token_balances: TransactionTokenBalancesSet,
         costs: Vec<Option<u64>>,
         transaction_indexes: Vec<usize>,
@@ -2260,6 +2269,8 @@ impl TransactionStatusSender {
                 transactions,
                 commit_results,
                 balances,
+                owners,
+                datum,
                 token_balances,
                 costs,
                 transaction_indexes,
@@ -4510,7 +4521,7 @@ pub mod tests {
         );
         let txs = vec![account_not_found_tx, invalid_blockhash_tx];
         let batch = bank.prepare_batch_for_tests(txs);
-        let (commit_results, _) = batch.bank().load_execute_and_commit_transactions(
+        let (commit_results, _, _, _) = batch.bank().load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             ExecutionRecordingConfig::new_single_setting(false),

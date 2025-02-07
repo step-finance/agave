@@ -8,7 +8,7 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{
-        bank::{Bank, ProcessedTransactionCounts},
+        bank::{Bank, ProcessedTransactionCounts, TransactionDatumSet, TransactionOwnersSet},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
@@ -16,6 +16,7 @@ use {
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
+        program_inclusions::PreOrPostDatum,
         transaction_balances::BalanceCollector,
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::TransactionProcessingResult,
@@ -133,6 +134,7 @@ impl Committer {
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
+            // TODO
             let mut transaction_index = Saturating(starting_transaction_index.unwrap_or_default());
             let (batch_transaction_indexes, tx_costs): (Vec<_>, Vec<_>) = commit_results
                 .iter()
@@ -177,6 +179,11 @@ impl Committer {
                 commit_results,
                 balances,
                 token_balances,
+                TransactionOwnersSet {
+                    pre_owners: std::mem::take(&mut pre_balance_info.owners),
+                    post_owners,
+                },
+                TransactionDatumSet::new(std::mem::take(&mut pre_balance_info.datum), post_datum),
                 tx_costs,
                 batch_transaction_indexes,
             );
