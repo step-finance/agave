@@ -56,6 +56,7 @@ use {
         signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_svm::program_inclusions::load_datum_program_inclusions,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
         collections::{HashMap, HashSet},
@@ -167,7 +168,9 @@ impl Default for TestValidatorGenesis {
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
             tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-            geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::new())),
+            geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::new(Arc::new(
+                RwLock::new(Default::default()),
+            )))),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
         }
@@ -986,6 +989,10 @@ impl TestValidator {
             ..AccountsDbConfig::default()
         });
 
+        let program_datum_inclusions = Arc::new(RwLock::new(load_datum_program_inclusions(
+            &config.geyser_plugin_config_files,
+        )));
+
         let runtime_config = RuntimeConfig {
             compute_budget: config
                 .compute_unit_limit
@@ -995,6 +1002,7 @@ impl TestValidator {
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
             transaction_account_lock_limit: config.transaction_account_lock_limit,
+            program_datum_inclusions,
         };
 
         let mut validator_config = ValidatorConfig {
