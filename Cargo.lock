@@ -297,6 +297,7 @@ dependencies = [
  "solana-send-transaction-service",
  "solana-storage-bigtable",
  "solana-streamer",
+ "solana-svm",
  "solana-test-validator",
  "solana-tpu-client",
  "solana-unified-scheduler-pool",
@@ -6834,6 +6835,7 @@ dependencies = [
  "solana-rpc",
  "solana-runtime",
  "solana-sdk",
+ "solana-svm",
  "solana-transaction-status",
  "thiserror 1.0.65",
  "tokio",
@@ -8511,6 +8513,7 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-streamer",
+ "solana-svm",
  "solana-tpu-client",
  "tokio",
 ]

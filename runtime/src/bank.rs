@@ -161,6 +161,7 @@ use {
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
+        program_inclusions::{PreOrPostDatum, ProgramDatumInclusions},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -363,6 +364,27 @@ impl TransactionBalancesSet {
     }
 }
 pub type TransactionBalances = Vec<Vec<u64>>;
+
+pub struct TransactionDatumSet {
+    pub pre_datum: TransactionDatum,
+    pub post_datum: TransactionDatum,
+}
+
+impl TransactionDatumSet {
+    pub fn new(pre_datum: TransactionDatum, post_datum: TransactionDatum) -> Self {
+        Self {
+            pre_datum,
+            post_datum,
+        }
+    }
+}
+pub type TransactionDatum = Vec<Vec<Option<Vec<u8>>>>;
+
+pub struct TransactionOwnersSet {
+    pub owners: TransactionOwners,
+}
+
+pub type TransactionOwners = Vec<Vec<Option<Pubkey>>>;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TransactionLogCollectorFilter {
@@ -575,6 +597,7 @@ impl PartialEq for Bank {
             accounts_data_size_delta_on_chain: _,
             accounts_data_size_delta_off_chain: _,
             epoch_reward_status: _,
+            program_datum_inclusions: _,
             transaction_processor: _,
             check_program_modification_slot: _,
             collector_fee_details: _,
@@ -900,6 +923,8 @@ pub struct Bank {
 
     check_program_modification_slot: bool,
 
+    /// programs that will have their account data sent to geyser
+    pub program_datum_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     /// Collected fee details
     collector_fee_details: RwLock<CollectorFeeDetails>,
 
@@ -1054,6 +1079,7 @@ impl Bank {
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
+            program_datum_inclusions: Arc::new(RwLock::new(ProgramDatumInclusions::default())),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
@@ -1095,6 +1121,7 @@ impl Bank {
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut bank = Self::default_with_accounts(accounts);
+        bank.program_datum_inclusions = runtime_config.program_datum_inclusions.clone();
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
         bank.compute_budget = runtime_config.compute_budget;
         bank.transaction_account_lock_limit = runtime_config.transaction_account_lock_limit;
@@ -1309,6 +1336,7 @@ impl Bank {
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: parent.epoch_reward_status.clone(),
+            program_datum_inclusions: parent.program_datum_inclusions.clone(),
             transaction_processor,
             check_program_modification_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
@@ -1632,6 +1660,7 @@ impl Bank {
         ));
         info!("Loading Stakes took: {stakes_time}");
         let stakes_accounts_load_duration = now.elapsed();
+        let program_datum_inclusions = runtime_config.program_datum_inclusions.clone();
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: bank_rc,
@@ -1691,6 +1720,7 @@ impl Bank {
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
+            program_datum_inclusions,
             // collector_fee_details is not serialized to snapshot
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: runtime_config.compute_budget,
@@ -3654,6 +3684,31 @@ impl Bank {
         balances
     }
 
+    pub fn collect_balances_and_datum(
+        &self,
+        batch: &TransactionBatch<impl SVMMessage>,
+        pre_or_post: PreOrPostDatum,
+    ) -> (TransactionBalances, TransactionDatum, TransactionOwners) {
+        let mut balances: TransactionBalances = vec![];
+        let mut datum: TransactionDatum = vec![];
+        let mut owners: TransactionOwners = vec![];
+        for transaction in batch.sanitized_transactions() {
+            let mut transaction_balances: Vec<u64> = vec![];
+            let mut transaction_datum: Vec<Option<Vec<u8>>> = vec![];
+            let mut transaction_owners: Vec<Option<Pubkey>> = vec![];
+            for account_key in transaction.account_keys().iter() {
+                let (balance, data, owner) = self.get_balance_and_data(account_key, &pre_or_post);
+                transaction_balances.push(balance);
+                transaction_datum.push(data);
+                transaction_owners.push(owner);
+            }
+            balances.push(transaction_balances);
+            datum.push(transaction_datum);
+            owners.push(transaction_owners);
+        }
+        (balances, datum, owners)
+    }
+
     pub fn load_and_execute_transactions(
         &self,
         batch: &TransactionBatch<SanitizedTransaction>,
@@ -4803,11 +4858,16 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
-        let pre_balances = if collect_balances {
-            self.collect_balances(batch)
+    ) -> (
+        Vec<TransactionCommitResult>,
+        TransactionBalancesSet,
+        TransactionDatumSet,
+        TransactionOwnersSet,
+    ) {
+        let (pre_balances, pre_datum, ..) = if collect_balances {
+            self.collect_balances_and_datum(batch, PreOrPostDatum::PreDatum)
         } else {
-            vec![]
+            (vec![], vec![], vec![])
         };
 
         let LoadAndExecuteTransactionsOutput {
@@ -4835,14 +4895,16 @@ impl Bank {
             &processed_counts,
             timings,
         );
-        let post_balances = if collect_balances {
-            self.collect_balances(batch)
+        let (post_balances, post_datum, owners) = if collect_balances {
+            self.collect_balances_and_datum(batch, PreOrPostDatum::PostDatum)
         } else {
-            vec![]
+            (vec![], vec![], vec![])
         };
         (
             commit_results,
             TransactionBalancesSet::new(pre_balances, post_balances),
+            TransactionDatumSet::new(pre_datum, post_datum),
+            TransactionOwnersSet { owners },
         )
     }
 
@@ -4933,12 +4995,45 @@ impl Bank {
     pub fn read_balance(account: &AccountSharedData) -> u64 {
         account.lamports()
     }
+
+    pub fn read_data(
+        &self,
+        account: &AccountSharedData,
+        pre_or_post: &PreOrPostDatum,
+    ) -> Option<Vec<u8>> {
+        let data = account.data();
+        let owner = account.owner();
+        let inclusions_lock = self.program_datum_inclusions.read().unwrap();
+        let inclusion = inclusions_lock.get(owner)?;
+        let include_data = inclusion.can_include_datum(pre_or_post, &data);
+
+        if !include_data {
+            None
+        } else {
+            Some(data.to_vec())
+        }
+    }
     /// Each program would need to be able to introspect its own state
     /// this is hard-coded to the Budget language
     pub fn get_balance(&self, pubkey: &Pubkey) -> u64 {
         self.get_account(pubkey)
             .map(|x| Self::read_balance(&x))
             .unwrap_or(0)
+    }
+    pub fn get_balance_and_data(
+        &self,
+        pubkey: &Pubkey,
+        pre_or_post: &PreOrPostDatum,
+    ) -> (u64, Option<Vec<u8>>, Option<Pubkey>) {
+        self.get_account(pubkey)
+            .map(|x| {
+                (
+                    Self::read_balance(&x),
+                    Self::read_data(self, &x, pre_or_post),
+                    Some(*x.owner()),
+                )
+            })
+            .unwrap_or((0, None, None))
     }
 
     /// Compute all the parents of the bank in order
