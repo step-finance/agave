@@ -85,6 +85,11 @@ impl DataPoint {
         self.fields.push((name, value.to_string()));
         self
     }
+
+    pub fn add_field_usize(&mut self, name: &'static str, value: usize) -> &mut Self {
+        self.fields.push((name, value.to_string()));
+        self
+    }
 }
 
 impl fmt::Display for DataPoint {
@@ -113,6 +118,9 @@ macro_rules! create_datapoint {
     };
     (@field $point:ident $name:expr, $value:expr, bool) => {
         $point.add_field_bool($name, $value as bool);
+    };
+    (@field $point:ident $name:expr, $value:expr, usize) => {
+        $point.add_field_usize($name, $value as usize);
     };
     (@tag $point:ident $tag_name:expr, $tag_value:expr) => {
         $point.add_tag($tag_name, &$tag_value);

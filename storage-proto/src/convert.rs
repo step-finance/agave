@@ -422,6 +422,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            ..
         } = value;
         let err = match status {
             Ok(()) => None,
@@ -577,6 +578,10 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             fee,
             pre_balances,
             post_balances,
+            pre_owners: None,
+            post_owners: None,
+            pre_datum: None,
+            post_datum: None,
             inner_instructions,
             log_messages,
             pre_token_balances,

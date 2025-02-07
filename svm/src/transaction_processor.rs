@@ -1,5 +1,7 @@
+use crate::transaction_balances::ProgramDatumInclusions;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::{field_qualifiers, qualifiers};
+
 use {
     crate::{
         account_loader::{
@@ -163,6 +165,7 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
 
     execution_cost: SVMTransactionExecutionCost,
+    pub program_datum_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
 }
 
 impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
@@ -188,6 +191,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             ))),
             builtin_program_ids: RwLock::new(HashSet::new()),
             execution_cost: SVMTransactionExecutionCost::default(),
+            program_datum_inclusions: Arc::new(RwLock::new(ProgramDatumInclusions::default())),
         }
     }
 }
@@ -202,11 +206,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ///
     /// When using this method, it's advisable to call `set_fork_graph_in_program_cache`
     /// as well as `add_builtin` to configure the cache before using the processor.
-    pub fn new_uninitialized(slot: Slot, epoch: Epoch) -> Self {
+    pub fn new_uninitialized(
+        slot: Slot,
+        epoch: Epoch,
+        program_datum_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
+    ) -> Self {
         Self {
             slot,
             epoch,
             global_program_cache: Arc::new(RwLock::new(ProgramCache::new(slot, epoch))),
+            program_datum_inclusions,
             ..Self::default()
         }
     }
@@ -225,8 +234,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fork_graph: Weak<RwLock<FG>>,
         program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
         program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+        program_datum_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) -> Self {
-        let processor = Self::new_uninitialized(slot, epoch);
+        let processor = Self::new_uninitialized(slot, epoch, program_datum_inclusions);
         {
             let mut global_program_cache = processor.global_program_cache.write().unwrap();
             global_program_cache.set_fork_graph(fork_graph);
@@ -245,7 +255,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// * Inherits the program cache and builtin program ids from the current
     ///   instance.
     /// * Resets the sysvar cache.
-    pub fn new_from(&self, slot: Slot, epoch: Epoch) -> Self {
+    pub fn new_from(
+        &self,
+        slot: Slot,
+        epoch: Epoch,
+        program_datum_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
+    ) -> Self {
         Self {
             slot,
             epoch,
@@ -253,6 +268,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             global_program_cache: self.global_program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
             execution_cost: self.execution_cost,
+            program_datum_inclusions,
         }
     }
 
@@ -424,8 +440,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            let ((), collect_balances_us) =
-                measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
+            let ((), collect_balances_us) = measure_us!(balance_collector.collect_pre_balances(
+                &mut account_loader,
+                tx,
+                self.program_datum_inclusions.clone()
+            ));
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
@@ -503,8 +522,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
-            let ((), collect_balances_us) =
-                measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
+            let ((), collect_balances_us) = measure_us!(balance_collector.collect_post_balances(
+                &mut account_loader,
+                tx,
+                self.program_datum_inclusions.clone()
+            ));
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 

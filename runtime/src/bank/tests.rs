@@ -4615,7 +4615,7 @@ fn test_pre_post_transaction_balances() {
     let txs = vec![tx0, tx1, tx2];
 
     let lock_result = bank0.prepare_batch_for_tests(txs);
-    let (commit_results, balance_collector) = bank0.load_execute_and_commit_transactions(
+    let (commit_results, balance_collector, _) = bank0.load_execute_and_commit_transactions(
         &lock_result,
         MAX_PROCESSING_AGE,
         ExecutionRecordingConfig {
