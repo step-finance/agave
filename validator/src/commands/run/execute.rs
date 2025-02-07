@@ -53,6 +53,7 @@ use {
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
     solana_runtime::{
+        program_inclusions::load_datum_program_inclusions,
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_utils::{
@@ -453,6 +454,10 @@ pub fn execute(
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
 
+    let program_datum_inclusions = Arc::new(RwLock::new(load_datum_program_inclusions(
+        &on_start_geyser_plugin_config_files,
+    )));
+
     let rpc_send_retry_rate_ms = value_t_or_exit!(matches, "rpc_send_transaction_retry_ms", u64);
     let rpc_send_batch_size = value_t_or_exit!(matches, "rpc_send_transaction_batch_size", usize);
     let rpc_send_batch_send_rate_ms =
@@ -645,6 +650,7 @@ pub fn execute(
         wait_to_vote_slot: None,
         runtime_config: RuntimeConfig {
             log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
+            program_datum_inclusions,
             ..RuntimeConfig::default()
         },
         staked_nodes_overrides: staked_nodes_overrides.clone(),

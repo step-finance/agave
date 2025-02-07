@@ -168,6 +168,28 @@ fn build_simple_ui_transaction_status_meta(
         fee: meta.fee,
         pre_balances: meta.pre_balances,
         post_balances: meta.post_balances,
+        pre_owners: meta.pre_owners.map(|o| {
+            o.into_iter()
+                .map(|ko| ko.map(|pk| pk.to_string()))
+                .collect()
+        }),
+        post_owners: meta.post_owners.map(|o| {
+            o.into_iter()
+                .map(|ko| ko.map(|pk| pk.to_string()))
+                .collect()
+        }),
+        pre_datum: meta.pre_datum.map(|a| {
+            a.into_iter()
+                .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                .into_iter()
+                .collect()
+        }),
+        post_datum: meta.post_datum.map(|a| {
+            a.into_iter()
+                .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                .into_iter()
+                .collect()
+        }),
         inner_instructions: OptionSerializer::Skip,
         log_messages: OptionSerializer::Skip,
         pre_token_balances: meta
@@ -202,6 +224,28 @@ fn parse_ui_transaction_status_meta(
         fee: meta.fee,
         pre_balances: meta.pre_balances,
         post_balances: meta.post_balances,
+        pre_owners: meta.pre_owners.map(|o| {
+            o.into_iter()
+                .map(|ko| ko.map(|pk| pk.to_string()))
+                .collect()
+        }),
+        post_owners: meta.post_owners.map(|o| {
+            o.into_iter()
+                .map(|ko| ko.map(|pk| pk.to_string()))
+                .collect()
+        }),
+        pre_datum: meta.pre_datum.map(|a| {
+            a.into_iter()
+                .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                .into_iter()
+                .collect()
+        }),
+        post_datum: meta.post_datum.map(|a| {
+            a.into_iter()
+                .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                .into_iter()
+                .collect()
+        }),
         inner_instructions: meta
             .inner_instructions
             .map(|ixs| {
@@ -603,6 +647,7 @@ impl ConfirmedTransactionWithStatusMeta {
         self,
         encoding: UiTransactionEncoding,
         max_supported_transaction_version: Option<u8>,
+        index_in_block: usize,
     ) -> Result<EncodedConfirmedTransactionWithStatusMeta, EncodeError> {
         Ok(EncodedConfirmedTransactionWithStatusMeta {
             slot: self.slot,
@@ -612,6 +657,8 @@ impl ConfirmedTransactionWithStatusMeta {
                 true,
             )?,
             block_time: self.block_time,
+            index_in_block,
+            slot_second_idx: None,
         })
     }
 
@@ -890,6 +937,9 @@ mod test {
             fee: 1234,
             pre_balances: vec![1, 2, 3],
             post_balances: vec![4, 5, 6],
+            post_owners: None,
+            pre_datum: None,
+            post_datum: None,
             inner_instructions: None,
             log_messages: None,
             pre_token_balances: None,

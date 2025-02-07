@@ -18,6 +18,7 @@ use {
         v0::{LoadedAddresses, MessageAddressTableLookup},
         MessageHeader,
     },
+    solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
     solana_signature::Signature,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
@@ -323,6 +324,13 @@ pub struct UiTransactionStatusMeta {
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
+    pub pre_owners: Option<Vec<Option<String>>>,
+    pub post_owners: Option<Vec<Option<String>>>,
+    //the first Option is for backward compat
+    //the inner Option is for if we filtered out the datum (exceeds max size)
+    //if account data is empty, that is "", not None
+    pub pre_datum: Option<Vec<Option<String>>>,
+    pub post_datum: Option<Vec<Option<String>>>,
     #[serde(
         default = "OptionSerializer::none",
         skip_serializing_if = "OptionSerializer::should_skip"
@@ -378,6 +386,28 @@ impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
+            pre_owners: meta.pre_owners.map(|o| {
+                o.into_iter()
+                    .map(|ko| ko.map(|pk| pk.to_string()))
+                    .collect()
+            }),
+            post_owners: meta.post_owners.map(|o| {
+                o.into_iter()
+                    .map(|ko| ko.map(|pk| pk.to_string()))
+                    .collect()
+            }),
+            pre_datum: meta.pre_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
+            post_datum: meta.post_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
             inner_instructions: meta
                 .inner_instructions
                 .map(|ixs| ixs.into_iter().map(Into::into).collect())
@@ -633,6 +663,13 @@ pub struct TransactionStatusMeta {
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
+    pub pre_owners: Option<Vec<Option<Pubkey>>>,
+    pub post_owners: Option<Vec<Option<Pubkey>>>,
+    //the first Option is for backward compat
+    //the inner Option is for if we filtered out the datum (exceeds max size)
+    //if account data is empty, that is "", not None
+    pub pre_datum: Option<Vec<Option<Vec<u8>>>>,
+    pub post_datum: Option<Vec<Option<Vec<u8>>>>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
     pub log_messages: Option<Vec<String>>,
     pub pre_token_balances: Option<Vec<TransactionTokenBalance>>,
@@ -651,6 +688,10 @@ impl Default for TransactionStatusMeta {
             fee: 0,
             pre_balances: vec![],
             post_balances: vec![],
+            pre_owners: None,
+            post_owners: None,
+            pre_datum: None,
+            post_datum: None,
             inner_instructions: None,
             log_messages: None,
             pre_token_balances: None,
@@ -692,13 +733,15 @@ impl From<UiConfirmedBlock> for EncodedConfirmedBlock {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EncodedConfirmedTransactionWithStatusMeta {
     pub slot: u64,
     #[serde(flatten)]
     pub transaction: EncodedTransactionWithStatusMeta,
     pub block_time: Option<i64>,
+    pub index_in_block: usize,
+    pub slot_second_idx: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
