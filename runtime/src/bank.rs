@@ -381,7 +381,8 @@ impl TransactionDatumSet {
 pub type TransactionDatum = Vec<Vec<Option<Vec<u8>>>>;
 
 pub struct TransactionOwnersSet {
-    pub owners: TransactionOwners,
+    pub pre_owners: TransactionOwners,
+    pub post_owners: TransactionOwners,
 }
 
 pub type TransactionOwners = Vec<Vec<Option<Pubkey>>>;
@@ -4864,7 +4865,7 @@ impl Bank {
         TransactionDatumSet,
         TransactionOwnersSet,
     ) {
-        let (pre_balances, pre_datum, ..) = if collect_balances {
+        let (pre_balances, pre_datum, pre_owners) = if collect_balances {
             self.collect_balances_and_datum(batch, PreOrPostDatum::PreDatum)
         } else {
             (vec![], vec![], vec![])
@@ -4895,7 +4896,7 @@ impl Bank {
             &processed_counts,
             timings,
         );
-        let (post_balances, post_datum, owners) = if collect_balances {
+        let (post_balances, post_datum, post_owners) = if collect_balances {
             self.collect_balances_and_datum(batch, PreOrPostDatum::PostDatum)
         } else {
             (vec![], vec![], vec![])
@@ -4904,7 +4905,7 @@ impl Bank {
             commit_results,
             TransactionBalancesSet::new(pre_balances, post_balances),
             TransactionDatumSet::new(pre_datum, post_datum),
-            TransactionOwnersSet { owners },
+            TransactionOwnersSet { pre_owners, post_owners },
         )
     }
 
