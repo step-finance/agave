@@ -566,6 +566,7 @@ pub struct TransactionStatusMeta {
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
+    pub pre_owners: Option<Vec<Option<Pubkey>>>,
     pub post_owners: Option<Vec<Option<Pubkey>>>,
     //the first Option is for backward compat
     //the inner Option is for if we filtered out the datum (exceeds max size)
@@ -589,6 +590,7 @@ impl Default for TransactionStatusMeta {
             fee: 0,
             pre_balances: vec![],
             post_balances: vec![],
+            pre_owners: None,
             post_owners: None,
             pre_datum: None,
             post_datum: None,
