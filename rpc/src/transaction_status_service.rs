@@ -127,6 +127,8 @@ impl TransactionStatusService {
                 slot,
                 transactions,
                 commit_results,
+                owners,
+                datum,
                 balances,
                 token_balances,
                 costs,
@@ -139,6 +141,10 @@ impl TransactionStatusService {
                     commit_result,
                     pre_balances,
                     post_balances,
+                    pre_owners,
+                    post_owners,
+                    pre_datum,
+                    post_datum,
                     pre_token_balances,
                     post_token_balances,
                     cost,
@@ -148,6 +154,10 @@ impl TransactionStatusService {
                     commit_results,
                     balances.pre_balances,
                     balances.post_balances,
+                    owners.pre_owners,
+                    owners.post_owners,
+                    datum.pre_datum,
+                    datum.post_datum,
                     token_balances.pre_token_balances,
                     token_balances.post_token_balances,
                     costs,
@@ -193,6 +203,10 @@ impl TransactionStatusService {
                         fee,
                         pre_balances,
                         post_balances,
+                        pre_owners: Some(pre_owners),
+                        post_owners: Some(post_owners),
+                        pre_datum: Some(pre_datum),
+                        post_datum: Some(post_datum),
                         inner_instructions,
                         log_messages,
                         pre_token_balances,
@@ -321,6 +335,7 @@ impl TransactionStatusService {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
     use {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
@@ -341,7 +356,9 @@ pub(crate) mod tests {
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
         solana_rent_debits::RentDebits,
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::bank::{
+            Bank, TransactionBalancesSet, TransactionDatumSet, TransactionOwnersSet,
+        },
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -499,6 +516,11 @@ pub(crate) mod tests {
         let transaction_index: usize = bank.transaction_count().try_into().unwrap();
         let transaction_status_batch = TransactionStatusBatch {
             slot,
+            owners: TransactionOwnersSet { owners: vec![] },
+            datum: TransactionDatumSet {
+                post_datum: vec![vec![Some(vec![0x69])]],
+                pre_datum: vec![vec![Some(vec![0x04, 0x20])]],
+            },
             transactions: vec![transaction],
             commit_results: vec![commit_result],
             balances,

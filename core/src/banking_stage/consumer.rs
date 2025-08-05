@@ -23,6 +23,7 @@ use {
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
         account_loader::validate_fee_payer,
+        program_inclusions::PreOrPostDatum,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
@@ -232,6 +233,22 @@ impl Consumer {
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
+
+        let mut pre_balance_info = PreBalanceInfo::default();
+        let (_, collect_balances_us) = measure_us!({
+            // If the extra meta-data services are enabled for RPC, collect the
+            // pre-balances for native and token programs.
+            if transaction_status_sender_enabled {
+                (
+                    pre_balance_info.native,
+                    pre_balance_info.datum,
+                    pre_balance_info.owners,
+                ) = bank.collect_balances_and_datum(batch, PreOrPostDatum::PreDatum);
+                pre_balance_info.token =
+                    collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals)
+            }
+        });
+        execute_and_commit_timings.collect_balances_us = collect_balances_us;
 
         let min_max = batch
             .sanitized_transactions()

@@ -50,6 +50,7 @@ solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
+solana-svm = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-validator-exit = { workspace = true }
