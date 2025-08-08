@@ -44,7 +44,6 @@ use {
         epoch_stakes::{split_epoch_stakes, EpochStakes, NodeVoteAccounts, VersionedEpochStakes},
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
-        program_inclusions::{PreOrPostDatum, ProgramDatumInclusions},
         rent_collector::RentCollectorWithMetrics,
         runtime_config::RuntimeConfig,
         serde_snapshot::BankIncrementalSnapshotPersistence,
@@ -145,6 +144,7 @@ use {
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
         transaction_balances::BalanceCollector,
+        transaction_balances::ProgramDatumInclusions,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -380,6 +380,15 @@ pub type TransactionDatum = Vec<Vec<Option<Vec<u8>>>>;
 pub struct TransactionOwnersSet {
     pub pre_owners: TransactionOwners,
     pub post_owners: TransactionOwners,
+}
+
+impl TransactionOwnersSet {
+    pub fn new(pre_owners: TransactionOwners, post_owners: TransactionOwners) -> Self {
+        Self {
+            pre_owners,
+            post_owners,
+        }
+    }
 }
 
 pub type TransactionOwners = Vec<Vec<Option<Pubkey>>>;
@@ -1180,8 +1189,11 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
-        bank.transaction_processor =
-            TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
+        bank.transaction_processor = TransactionBatchProcessor::new_uninitialized(
+            bank.slot,
+            bank.epoch,
+            bank.program_datum_inclusions.clone(),
+        );
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
@@ -1331,9 +1343,13 @@ impl Bank {
 
         let (epoch_stakes, epoch_stakes_time_us) = measure_us!(parent.epoch_stakes.clone());
 
-        let (transaction_processor, builtin_program_ids_time_us) = measure_us!(
-            TransactionBatchProcessor::new_from(&parent.transaction_processor, slot, epoch)
-        );
+        let (transaction_processor, builtin_program_ids_time_us) =
+            measure_us!(TransactionBatchProcessor::new_from(
+                &parent.transaction_processor,
+                slot,
+                epoch,
+                parent.program_datum_inclusions.clone()
+            ));
 
         let (rewards_pool_pubkeys, rewards_pool_pubkeys_time_us) =
             measure_us!(parent.rewards_pool_pubkeys.clone());
@@ -1919,8 +1935,11 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
-        bank.transaction_processor =
-            TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
+        bank.transaction_processor = TransactionBatchProcessor::new_uninitialized(
+            bank.slot,
+            bank.epoch,
+            bank.program_datum_inclusions.clone(),
+        );
 
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
@@ -3475,31 +3494,6 @@ impl Bank {
         balances
     }
 
-    pub fn collect_balances_and_datum(
-        &self,
-        batch: &TransactionBatch<impl SVMMessage>,
-        pre_or_post: PreOrPostDatum,
-    ) -> (TransactionBalances, TransactionDatum, TransactionOwners) {
-        let mut balances: TransactionBalances = vec![];
-        let mut datum: TransactionDatum = vec![];
-        let mut owners: TransactionOwners = vec![];
-        for transaction in batch.sanitized_transactions() {
-            let mut transaction_balances: Vec<u64> = vec![];
-            let mut transaction_datum: Vec<Option<Vec<u8>>> = vec![];
-            let mut transaction_owners: Vec<Option<Pubkey>> = vec![];
-            for account_key in transaction.account_keys().iter() {
-                let (balance, data, owner) = self.get_balance_and_data(account_key, &pre_or_post);
-                transaction_balances.push(balance);
-                transaction_datum.push(data);
-                transaction_owners.push(owner);
-            }
-            balances.push(transaction_balances);
-            datum.push(transaction_datum);
-            owners.push(transaction_owners);
-        }
-        (balances, datum, owners)
-    }
-
     pub fn load_and_execute_transactions(
         &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
@@ -4654,12 +4648,7 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (
-        Vec<TransactionCommitResult>,
-        Option<BalanceCollector>,
-        TransactionDatumSet,
-        TransactionOwnersSet,
-    ) {
+    ) -> (Vec<TransactionCommitResult>, Option<BalanceCollector>) {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             max_age,
@@ -4682,12 +4671,7 @@ impl Bank {
             &mut ExecuteTimings,
             &[TransactionProcessingResult],
         ) -> PreCommitResult<'a>,
-    ) -> (
-        Vec<TransactionCommitResult>,
-        Option<BalanceCollector>,
-        TransactionDatumSet,
-        TransactionOwnersSet,
-    ) {
+    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             max_age,
@@ -4708,19 +4692,7 @@ impl Bank {
         pre_commit_callback: Option<
             impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
         >,
-    ) -> (
-        Vec<TransactionCommitResult>,
-        Option<BalanceCollector>,
-        TransactionDatumSet,
-        TransactionOwnersSet,
-    ) {
-        //TODO gmj
-        let (pre_balances, pre_datum, pre_owners) = if collect_balances {
-            self.collect_balances_and_datum(batch, PreOrPostDatum::PreDatum)
-        } else {
-            (vec![], vec![], vec![])
-        };
-
+    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
@@ -4755,21 +4727,7 @@ impl Bank {
             timings,
         );
         drop(freeze_lock);
-        //TODO gmj
-        let (post_balances, post_datum, post_owners) = if collect_balances {
-            self.collect_balances_and_datum(batch, PreOrPostDatum::PostDatum)
-        } else {
-            (vec![], vec![], vec![])
-        };
-        Ok((
-            commit_results,
-            balance_collector,
-            TransactionDatumSet::new(pre_datum, post_datum),
-            TransactionOwnersSet {
-                pre_owners,
-                post_owners,
-            },
-        ))
+        Ok((commit_results, balance_collector))
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
@@ -4859,44 +4817,10 @@ impl Bank {
         account.lamports()
     }
 
-    pub fn read_data(
-        &self,
-        account: &AccountSharedData,
-        pre_or_post: &PreOrPostDatum,
-    ) -> Option<Vec<u8>> {
-        let data = account.data();
-        let owner = account.owner();
-        let inclusions_lock = self.program_datum_inclusions.read().unwrap();
-        let inclusion = inclusions_lock.get(owner)?;
-        let include_data = inclusion.can_include_datum(pre_or_post, &data);
-
-        if !include_data {
-            None
-        } else {
-            Some(data.to_vec())
-        }
-    }
-    /// Each program would need to be able to introspect its own state
-    /// this is hard-coded to the Budget language
     pub fn get_balance(&self, pubkey: &Pubkey) -> u64 {
         self.get_account(pubkey)
             .map(|x| Self::read_balance(&x))
             .unwrap_or(0)
-    }
-    pub fn get_balance_and_data(
-        &self,
-        pubkey: &Pubkey,
-        pre_or_post: &PreOrPostDatum,
-    ) -> (u64, Option<Vec<u8>>, Option<Pubkey>) {
-        self.get_account(pubkey)
-            .map(|x| {
-                (
-                    Self::read_balance(&x),
-                    Self::read_data(self, &x, pre_or_post),
-                    Some(*x.owner()),
-                )
-            })
-            .unwrap_or((0, None, None))
     }
 
     /// Compute all the parents of the bank in order

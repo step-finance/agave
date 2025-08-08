@@ -8,7 +8,7 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{
-        bank::{Bank, ProcessedTransactionCounts, TransactionDatumSet, TransactionOwnersSet},
+        bank::{Bank, ProcessedTransactionCounts},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
@@ -16,7 +16,6 @@ use {
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
-        program_inclusions::PreOrPostDatum,
         transaction_balances::BalanceCollector,
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::TransactionProcessingResult,
@@ -127,14 +126,13 @@ impl Committer {
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
             let sanitized_transactions = batch.sanitized_transactions();
-
             // Clone `SanitizedTransaction` out of `RuntimeTransaction`, this is
             // done to send over the status sender.
             let txs = sanitized_transactions
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
-            // TODO
+
             let mut transaction_index = Saturating(starting_transaction_index.unwrap_or_default());
             let (batch_transaction_indexes, tx_costs): (Vec<_>, Vec<_>) = commit_results
                 .iter()
@@ -170,7 +168,7 @@ impl Committer {
             // Therefore this should always be true.
             debug_assert!(balance_collector.is_some());
 
-            let (balances, token_balances) =
+            let (balances, token_balances, datums_set, owners_set) =
                 compile_collected_balances(balance_collector.unwrap_or_default());
 
             transaction_status_sender.send_transaction_status_batch(
@@ -179,11 +177,8 @@ impl Committer {
                 commit_results,
                 balances,
                 token_balances,
-                TransactionOwnersSet {
-                    pre_owners: std::mem::take(&mut pre_balance_info.owners),
-                    post_owners,
-                },
-                TransactionDatumSet::new(std::mem::take(&mut pre_balance_info.datum), post_datum),
+                owners_set,
+                datums_set,
                 tx_costs,
                 batch_transaction_indexes,
             );

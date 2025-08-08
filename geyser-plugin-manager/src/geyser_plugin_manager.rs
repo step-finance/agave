@@ -3,7 +3,8 @@ use {
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
     libloading::Library,
     log::*,
-    solana_svm::program_inclusions::{load_datum_program_inclusions, ProgramDatumInclusions},
+    solana_runtime::program_inclusions::load_datum_program_inclusions,
+    solana_svm::transaction_balances::ProgramDatumInclusions,
     std::{
         ops::{Deref, DerefMut},
         path::Path,

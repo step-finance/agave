@@ -8454,6 +8454,7 @@ dependencies = [
  "solana-rpc",
  "solana-runtime",
  "solana-signature",
+ "solana-svm",
  "solana-transaction",
  "solana-transaction-status",
  "thiserror 2.0.12",

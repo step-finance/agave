@@ -59,6 +59,7 @@ use {
         rpc_pubsub_service::PubSubConfig,
     },
     solana_runtime::{
+        program_inclusions::load_datum_program_inclusions,
         runtime_config::RuntimeConfig,
         snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -70,7 +71,6 @@ use {
         quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
         socket::SocketAddrSpace,
     },
-    solana_svm::program_inclusions::load_datum_program_inclusions,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::xdp::{set_cpu_affinity, XdpConfig},
     std::{

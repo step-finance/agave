@@ -18,7 +18,7 @@ use {
         slot_status_notifier::SlotStatusNotifier,
         transaction_notifier_interface::TransactionNotifierArc,
     },
-    solana_svm::program_inclusions::ProgramDatumInclusions,
+    solana_svm::transaction_balances::ProgramDatumInclusions,
     std::{
         path::{Path, PathBuf},
         sync::{

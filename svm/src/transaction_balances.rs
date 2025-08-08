@@ -1,5 +1,11 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
+
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::field_qualifiers;
+use serde::Deserialize;
 use {
     crate::{
         account_loader::AccountLoader,
@@ -17,18 +23,52 @@ type TxTokenBalances = Vec<SvmTokenInfo>;
 type BatchNativeBalances = Vec<TxNativeBalances>;
 type BatchTokenBalances = Vec<TxTokenBalances>;
 
+pub enum PreOrPostDatum {
+    PreDatum,
+    PostDatum,
+}
+pub type ProgramDatumInclusions = HashMap<Pubkey, DatumInclusion>;
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DatumInclusion {
+    #[serde(default)]
+    pub pre: bool,
+    #[serde(default)]
+    pub post: bool,
+    #[serde(default)]
+    pub length_exclusions: Vec<usize>,
+}
+
+impl DatumInclusion {
+    pub fn can_include_datum(&self, pre_or_post: &PreOrPostDatum, data: &[u8]) -> bool {
+        let allow_pre_post = match pre_or_post {
+            PreOrPostDatum::PreDatum => self.pre,
+            PreOrPostDatum::PostDatum => self.post,
+        };
+
+        if !allow_pre_post {
+            return false;
+        }
+
+        !self.length_exclusions.contains(&data.len())
+    }
+}
+
 // to operate cleanly over Option<BalanceCollector> we use a trait impled on the outer and inner type
 pub(crate) trait BalanceCollectionRoutines {
     fn collect_pre_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        program_data_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     );
 
     fn collect_post_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        program_data_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     );
 }
 
@@ -42,6 +82,11 @@ pub struct BalanceCollector {
     native_post: BatchNativeBalances,
     token_pre: BatchTokenBalances,
     token_post: BatchTokenBalances,
+    // gmj our custom
+    pre_datum: Vec<Vec<Option<Vec<u8>>>>,
+    post_datum: Vec<Vec<Option<Vec<u8>>>>,
+    pre_owners: Vec<Vec<Option<Pubkey>>>,
+    post_owners: Vec<Vec<Option<Pubkey>>>,
 }
 
 impl BalanceCollector {
@@ -52,6 +97,10 @@ impl BalanceCollector {
             native_post: Vec::with_capacity(transaction_count),
             token_pre: Vec::with_capacity(transaction_count),
             token_post: Vec::with_capacity(transaction_count),
+            pre_datum: Vec::with_capacity(transaction_count),
+            post_datum: Vec::with_capacity(transaction_count),
+            pre_owners: Vec::with_capacity(transaction_count),
+            post_owners: Vec::with_capacity(transaction_count),
         }
     }
 
@@ -64,12 +113,20 @@ impl BalanceCollector {
         BatchNativeBalances,
         BatchTokenBalances,
         BatchTokenBalances,
+        Vec<Vec<Option<Vec<u8>>>>,
+        Vec<Vec<Option<Vec<u8>>>>,
+        Vec<Vec<Option<Pubkey>>>,
+        Vec<Vec<Option<Pubkey>>>,
     ) {
         (
             self.native_pre,
             self.native_post,
             self.token_pre,
             self.token_post,
+            self.pre_datum,
+            self.post_datum,
+            self.pre_owners,
+            self.post_owners,
         )
     }
 
@@ -109,6 +166,40 @@ impl BalanceCollector {
         (native_balances, token_balances)
     }
 
+    // gmj custom datum collector
+    fn collect_datums<CB: TransactionProcessingCallback>(
+        &self,
+        account_loader: &mut AccountLoader<CB>,
+        transaction: &impl SVMTransaction,
+        program_data_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
+        pre_or_post: &PreOrPostDatum,
+    ) -> (Vec<Option<Vec<u8>>>, Vec<Option<Pubkey>>) {
+        let mut datums = vec![];
+        let mut owners = vec![];
+        let inclusions_lock = program_data_inclusions.read().unwrap();
+
+        for (_index, account_key) in transaction.account_keys().iter().enumerate() {
+            let Some(account) = account_loader.load_account(account_key) else {
+                // handle the case where account created / closed
+                datums.push(None);
+                owners.push(None);
+                continue;
+            };
+            let data = account.data();
+            let owner = account.owner();
+
+            let datum = match inclusions_lock.get(owner) {
+                Some(inclusion) if inclusion.can_include_datum(pre_or_post, data) => {
+                    Some(data.to_vec())
+                }
+                _ => None,
+            };
+            datums.push(datum);
+            owners.push(Some(*owner));
+        }
+        (datums, owners)
+    }
+
     pub(crate) fn lengths_match_expected(&self, expected_len: usize) -> bool {
         self.native_pre.len() == expected_len
             && self.native_post.len() == expected_len
@@ -122,20 +213,40 @@ impl BalanceCollectionRoutines for BalanceCollector {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        program_data_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) {
         let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
         self.native_pre.push(native_balances);
         self.token_pre.push(token_balances);
+
+        let (pre_datum, pre_owner) = self.collect_datums(
+            account_loader,
+            transaction,
+            program_data_inclusions,
+            &PreOrPostDatum::PreDatum,
+        );
+        self.pre_datum.push(pre_datum);
+        self.pre_owners.push(pre_owner);
     }
 
     fn collect_post_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        program_data_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) {
         let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
         self.native_post.push(native_balances);
         self.token_post.push(token_balances);
+
+        let (post_datum, post_owner) = self.collect_datums(
+            account_loader,
+            transaction,
+            program_data_inclusions,
+            &PreOrPostDatum::PostDatum,
+        );
+        self.post_datum.push(post_datum);
+        self.post_owners.push(post_owner);
     }
 }
 
@@ -144,9 +255,10 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        program_data_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) {
         if let Some(inner) = self {
-            inner.collect_pre_balances(account_loader, transaction)
+            inner.collect_pre_balances(account_loader, transaction, program_data_inclusions)
         }
     }
 
@@ -154,9 +266,10 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        program_data_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) {
         if let Some(inner) = self {
-            inner.collect_post_balances(account_loader, transaction)
+            inner.collect_post_balances(account_loader, transaction, program_data_inclusions)
         }
     }
 }

@@ -230,7 +230,7 @@ pub fn execute_batch<'a>(
         }
     };
 
-    let (commit_results, balance_collector, datum, owners) = batch
+    let (commit_results, balance_collector) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -294,7 +294,7 @@ pub fn execute_batch<'a>(
         // Therefore this should always be true.
         debug_assert!(balance_collector.is_some());
 
-        let (balances, token_balances) =
+        let (balances, token_balances, datum_set, owner_set) =
             compile_collected_balances(balance_collector.unwrap_or_default());
 
         // The length of costs vector needs to be consistent with all other
@@ -310,9 +310,9 @@ pub fn execute_batch<'a>(
             transactions,
             commit_results,
             balances,
-            owners,
-            datum,
             token_balances,
+            owner_set,
+            datum_set,
             tx_costs,
             transaction_indexes.into_owned(),
         );
@@ -2256,9 +2256,9 @@ impl TransactionStatusSender {
         transactions: Vec<SanitizedTransaction>,
         commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
+        token_balances: TransactionTokenBalancesSet,
         owners: TransactionOwnersSet,
         datum: TransactionDatumSet,
-        token_balances: TransactionTokenBalancesSet,
         costs: Vec<Option<u64>>,
         transaction_indexes: Vec<usize>,
     ) {
@@ -2269,9 +2269,9 @@ impl TransactionStatusSender {
                 transactions,
                 commit_results,
                 balances,
+                token_balances,
                 owners,
                 datum,
-                token_balances,
                 costs,
                 transaction_indexes,
             }))
@@ -4521,7 +4521,7 @@ pub mod tests {
         );
         let txs = vec![account_not_found_tx, invalid_blockhash_tx];
         let batch = bank.prepare_batch_for_tests(txs);
-        let (commit_results, _, _, _) = batch.bank().load_execute_and_commit_transactions(
+        let (commit_results, _) = batch.bank().load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             ExecutionRecordingConfig::new_single_setting(false),

@@ -1,41 +1,13 @@
-use std::{collections::HashMap, fs, path::PathBuf};
-
-use serde::Deserialize;
 use solana_pubkey::Pubkey;
+use solana_svm::transaction_balances::{DatumInclusion, ProgramDatumInclusions};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 pub enum PreOrPostDatum {
     PreDatum,
     PostDatum,
 }
 
-pub type ProgramDatumInclusions = HashMap<Pubkey, DatumInclusion>;
 pub type InclusionsFromConfig = HashMap<String, DatumInclusion>;
-
-#[derive(Deserialize, Debug, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct DatumInclusion {
-    #[serde(default)]
-    pub pre: bool,
-    #[serde(default)]
-    pub post: bool,
-    #[serde(default)]
-    pub length_exclusions: Vec<usize>,
-}
-
-impl DatumInclusion {
-    pub fn can_include_datum(&self, pre_or_post: &PreOrPostDatum, data: &[u8]) -> bool {
-        let allow_pre_post = match pre_or_post {
-            PreOrPostDatum::PreDatum => self.pre,
-            PreOrPostDatum::PostDatum => self.post,
-        };
-
-        if !allow_pre_post {
-            return false;
-        }
-
-        !self.length_exclusions.contains(&data.len())
-    }
-}
 
 #[derive(serde::Deserialize)]
 struct GeyserConfigFileWithInclusions {

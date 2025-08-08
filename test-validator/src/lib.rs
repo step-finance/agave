@@ -44,6 +44,7 @@ use {
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
+    solana_runtime::program_inclusions::load_datum_program_inclusions,
     solana_runtime::{
         bank_forks::BankForks,
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
@@ -53,7 +54,6 @@ use {
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
-    solana_svm::program_inclusions::load_datum_program_inclusions,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_validator_exit::Exit,
     std::{
